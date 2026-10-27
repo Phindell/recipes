@@ -134,3 +134,15 @@ label.field>span{display:block;font-weight:600;margin:0 0 6px;font-size:.92rem}
 @keyframes spin{to{transform:rotate(360deg)}}
 .login{max-width:380px;margin:40px auto}
 .login h2{font-family:var(--serif)}
+
+/* folders */
+.folderbar{display:flex;gap:6px;overflow-x:auto;padding:10px 0 2px;margin:0 -16px;padding-left:16px;padding-right:16px;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.folderbar::-webkit-scrollbar{display:none}
+.fchip{flex:none;display:inline-flex;align-items:center;gap:4px;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:999px;
+  padding:6px 12px;font-size:.88rem;cursor:pointer;white-space:nowrap;user-select:none}
+.fchip span{opacity:.7;font-size:.8em}
+.fchip.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.fchip.add{border-style:dashed;background:none;color:var(--muted)}
+.folderpick{display:flex;flex-wrap:wrap;gap:6px}
+.frow{display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)}
+.frow input{flex:1;min-width:0}

@@ -72,6 +72,21 @@ const localApi = {
   },
   async updateShopping(id, patch) { LS.set("shopping", LS.get("shopping").map(x => (x.id === id ? { ...x, ...patch } : x))); },
   async deleteShopping(ids) { const s = new Set(ids); LS.set("shopping", LS.get("shopping").filter(x => !s.has(x.id))); },
+  async listFolders() { return LS.get("folders").sort(byName); },
+  async addFolder(name) {
+    const all = LS.get("folders");
+    if (all.some(f => f.name.toLowerCase() === name.toLowerCase())) throw new Error("duplicate");
+    const n = { id: uid(), name, created_at: new Date().toISOString() }; all.push(n); LS.set("folders", all); return n;
+  },
+  async renameFolder(id, name) {
+    const all = LS.get("folders");
+    if (all.some(f => f.id !== id && f.name.toLowerCase() === name.toLowerCase())) throw new Error("duplicate");
+    LS.set("folders", all.map(f => (f.id === id ? { ...f, name } : f)));
+  },
+  async deleteFolder(id) {
+    LS.set("folders", LS.get("folders").filter(f => f.id !== id));
+    LS.set("recipes", LS.get("recipes").map(r => ({ ...r, folder_ids: (r.folder_ids || []).filter(x => x !== id) })));
+  },
   async uploadPhoto(blob) { return blobToDataURL(blob); },
   async importRecipe() { throw new Error("Importing switches on after the cloud setup (SETUP.md). In demo mode, type or paste the recipe below."); }
 };
@@ -94,6 +109,10 @@ const cloudApi = {
   async addShopping(items) { return must(await sb.from("shopping_items").insert(items).select()); },
   async updateShopping(id, patch) { must(await sb.from("shopping_items").update(patch).eq("id", id)); },
   async deleteShopping(ids) { if (ids.length) must(await sb.from("shopping_items").delete().in("id", ids)); },
+  async listFolders() { return must(await sb.from("folders").select("*").order("name")); },
+  async addFolder(name) { return must(await sb.from("folders").insert({ name, created_by: state.user?.email || null }).select().single()); },
+  async renameFolder(id, name) { must(await sb.from("folders").update({ name }).eq("id", id)); },
+  async deleteFolder(id) { must(await sb.from("folders").delete().eq("id", id)); }, // database also removes it from recipes
   async uploadPhoto(blob) {
     const path = `uploads/${uid()}.jpg`;
     must(await sb.storage.from("photos").upload(path, blob, { contentType: "image/jpeg", cacheControl: "31536000" }));
@@ -113,10 +132,18 @@ const cloudApi = {
 const api = MODE === "cloud" ? cloudApi : localApi;
 
 /* ---------- state ---------- */
-const state = { user: null, recipes: [], plan: [], shopping: [], weekStart: startOfWeek(new Date()), search: "", scale: {}, draft: null };
+const state = { user: null, recipes: [], folders: [], folder: "all", foldersMissing: false, plan: [], shopping: [], weekStart: startOfWeek(new Date()), search: "", scale: {}, draft: null };
 const recipeById = id => state.recipes.find(r => r.id === id);
 
-async function loadRecipes() { state.recipes = await api.listRecipes(); }
+async function loadRecipes() {
+  const [recipes, folders] = await Promise.all([api.listRecipes(), api.listFolders().catch(() => null)]);
+  state.recipes = recipes;
+  state.foldersMissing = folders === null; // database not updated yet (supabase/add-folders.sql)
+  state.folders = folders || [];
+  if (state.folder !== "all" && !state.folders.some(f => f.id === state.folder)) state.folder = "all";
+}
+const folderName = id => state.folders.find(f => f.id === id)?.name;
+const friendlyFolderError = e => (/duplicate|unique/i.test(e.message) ? "There's already a folder with that name." : e.message);
 async function loadPlan() { state.plan = await api.listPlan(ymd(state.weekStart), ymd(addDays(state.weekStart, 6))); }
 async function loadShopping() { state.shopping = await api.listShopping(); }
 
@@ -166,13 +193,24 @@ function photoOrEmoji(r, cls = "") {
 }
 function renderRecipes() {
   const q = state.search.toLowerCase();
-  const list = state.recipes.filter(r => !q || r.name.toLowerCase().includes(q) || (r.ingredients || []).some(i => i.toLowerCase().includes(q)));
+  const inFolder = r => state.folder === "all" || (r.folder_ids || []).includes(state.folder);
+  const list = state.recipes.filter(r => inFolder(r) && (!q || r.name.toLowerCase().includes(q) || (r.ingredients || []).some(i => i.toLowerCase().includes(q))));
+  const count = id => state.recipes.filter(r => (r.folder_ids || []).includes(id)).length;
+  const emptyMsg = !state.recipes.length ? "No recipes yet — tap + to add or import your first one."
+    : q ? "No matches." : `Nothing in “${esc(folderName(state.folder))}” yet. Tap + to add a recipe here, or open a recipe → Edit → tick this folder.`;
   $("#view").innerHTML = `
     ${MODE === "local" ? `<div class="banner">Demo mode — recipes are saved on this device only. Follow SETUP.md to share with family.</div>` : ""}
     <input type="search" id="search" placeholder="Search recipes or ingredients…" value="${esc(state.search)}" style="margin-top:10px">
+    ${state.foldersMissing ? `<div class="banner" style="margin-top:10px">Folders need a quick database update — run <strong>supabase/add-folders.sql</strong> in Supabase (see SETUP.md).</div>` : `
+    <div class="folderbar">
+      <button class="fchip ${state.folder === "all" ? "on" : ""}" data-act="pickFolder" data-id="all">All <span>${state.recipes.length}</span></button>
+      ${state.folders.map(f => `<button class="fchip ${state.folder === f.id ? "on" : ""}" data-act="pickFolder" data-id="${f.id}">📁 ${esc(f.name)} <span>${count(f.id)}</span></button>`).join("")}
+      <button class="fchip add" data-act="newFolder">+ Folder</button>
+      ${state.folders.length ? `<button class="fchip add" data-act="manageFolders">✏️ Edit folders</button>` : ""}
+    </div>`}
     ${list.length ? `<div class="grid">${list.map(r => `
       <a class="rcard card" href="#/recipe/${r.id}"><div class="ph">${photoOrEmoji(r)}</div><div class="nm">${esc(r.name)}</div></a>`).join("")}</div>`
-      : `<p class="muted center pad">${state.recipes.length ? "No matches." : "No recipes yet — tap + to add or import your first one."}</p>`}
+      : `<p class="muted center pad">${emptyMsg}</p>`}
     <button class="fab" data-act="newRecipe" aria-label="Add recipe">+</button>`;
   const s = $("#search");
   s.oninput = () => { state.search = s.value; const pos = s.selectionStart; renderRecipes(); const n = $("#search"); n.focus(); n.setSelectionRange(pos, pos); };
@@ -202,6 +240,8 @@ function renderRecipe(id) {
         ${methodHtml(r.method || [])}
       </section>
       ${r.notes ? `<section class="section"><h3>Extra notes</h3><div class="notes">${esc(r.notes)}</div></section>` : ""}
+      ${(r.folder_ids || []).filter(folderName).length ? `<div class="folderpick" style="margin-top:8px">${r.folder_ids.filter(folderName).map(fid =>
+        `<button class="fchip" data-act="openFolder" data-id="${fid}">📁 ${esc(folderName(fid))}</button>`).join("")}</div>` : ""}
       ${safeUrl(r.source_url) ? `<p class="hint">Source: <a href="${esc(r.source_url)}" target="_blank" rel="noopener">${esc(new URL(r.source_url).hostname)}</a></p>` : ""}
       <div class="actions">
         <button class="btn primary" data-act="recipeToShop" data-id="${r.id}">🛒 Add to shopping list</button>
@@ -227,7 +267,7 @@ function methodHtml(steps) {
 function renderEdit(id) {
   const existing = id && id !== "new" ? recipeById(id) : null;
   if (!state.draft || state.draft._for !== (id || "new")) {
-    state.draft = existing ? { ...existing, _for: id } : { name: "", photo_url: "", ingredients: [], method: [], notes: "", servings: null, source_url: "", _for: "new" };
+    state.draft = existing ? { ...existing, _for: id } : { name: "", photo_url: "", ingredients: [], method: [], notes: "", servings: null, source_url: "", folder_ids: state.folder !== "all" ? [state.folder] : [], _for: "new" };
   }
   const d = state.draft;
   $("#view").innerHTML = `
@@ -259,6 +299,11 @@ function renderEdit(id) {
         <div class="hint">One per line. A line ending in “:” becomes a heading (e.g. “For the sauce:”).</div></label>
       <label class="field"><span>Method</span><textarea name="method" rows="8" placeholder="One step per line">${esc((d.method || []).join("\n"))}</textarea></label>
       <label class="field"><span>Extra notes</span><textarea name="notes" rows="4" placeholder="Tips, swaps, who loves it…">${esc(d.notes || "")}</textarea></label>
+      ${state.foldersMissing ? "" : `<div class="field"><span style="display:block;font-weight:600;margin-bottom:6px;font-size:.92rem">Folders</span>
+        <div class="folderpick">${state.folders.map(f => { const on = (d.folder_ids || []).includes(f.id);
+          return `<label class="fchip ${on ? "on" : ""}"><input type="checkbox" value="${f.id}" ${on ? "checked" : ""} hidden>📁 ${esc(f.name)}</label>`; }).join("")}
+          <button type="button" class="fchip add" data-act="newFolderFromEdit">+ New folder</button></div>
+        <div class="hint">Tap to put this recipe in one or more folders.</div></div>`}
       <div class="row">
         <label class="field" style="width:120px"><span>Serves</span><input type="number" name="servings" min="1" max="99" value="${esc(d.servings ?? "")}"></label>
         <label class="field grow"><span>Source link</span><input type="url" name="source_url" value="${esc(d.source_url || "")}"></label>
@@ -272,10 +317,12 @@ function renderEdit(id) {
     Object.assign(state.draft, {
       name: f.get("name").trim(), ingredients: lines(f.get("ingredients")),
       method: lines(f.get("method")).map(s => s.replace(/^(step\s*)?\d+[.)]\s*/i, "")),
-      notes: f.get("notes").trim(), servings: parseInt(f.get("servings")) || null, source_url: f.get("source_url").trim()
+      notes: f.get("notes").trim(), servings: parseInt(f.get("servings")) || null, source_url: f.get("source_url").trim(),
+      folder_ids: $$(".folderpick input:checked", form).map(i => i.value)
     });
   };
   form.oninput = syncDraft;
+  form.onchange = e => { if (e.target.matches(".folderpick input")) { e.target.parentElement.classList.toggle("on", e.target.checked); syncDraft(); } };
   $("#photoFile").onchange = async e => {
     const file = e.target.files[0]; if (!file) return;
     const blob = await compressImage(file, MODE === "cloud" ? 1600 : 800);
@@ -299,6 +346,7 @@ function renderEdit(id) {
       let photo = d.photo_url || null;
       if (d._photoBlob) photo = await api.uploadPhoto(d._photoBlob);
       const row = { name: d.name, photo_url: photo, ingredients: d.ingredients, method: d.method, notes: d.notes, servings: d.servings, source_url: d.source_url || null };
+      if (!state.foldersMissing) row.folder_ids = (d.folder_ids || []).filter(folderName);
       if (existing) row.id = existing.id;
       const saved = await api.saveRecipe(row);
       state.draft = null;
@@ -463,6 +511,42 @@ function renderShop() {
   };
 }
 
+/* ---------- folders (anyone in the family can add, rename, delete) ---------- */
+function newFolderModal(onCreated) {
+  openModal(`
+    <h3>New folder</h3>
+    <form id="nfForm"><input type="text" id="nfName" maxlength="60" placeholder="e.g. Dinners, Baking, Christmas" autocomplete="off" required>
+    <div class="row" style="margin-top:14px"><button type="button" class="btn grow" data-act="closeModal">Cancel</button>
+      <button class="btn primary grow">Create</button></div></form>`);
+  setTimeout(() => $("#nfName")?.focus(), 50);
+  $("#nfForm").onsubmit = async e => {
+    e.preventDefault();
+    const name = $("#nfName").value.trim(); if (!name) return;
+    try { const f = await api.addFolder(name); await loadRecipes(); closeModal(); toast(`Folder “${name}” created ✓`); onCreated?.(f); }
+    catch (err) { toast(friendlyFolderError(err)); }
+  };
+}
+
+function manageFoldersModal() {
+  openModal(`
+    <h3>Edit folders</h3>
+    <p class="hint">Rename a folder by typing over its name. Deleting a folder keeps its recipes — they just leave that folder.</p>
+    <div id="frows">${state.folders.map(f => `
+      <div class="frow"><input type="text" value="${esc(f.name)}" data-fid="${f.id}" maxlength="60">
+        <button class="btn small danger" data-act="deleteFolder" data-id="${f.id}">Delete</button></div>`).join("")}</div>
+    <div class="row" style="margin-top:14px"><button class="btn grow" data-act="newFolder">+ New folder</button>
+      <button class="btn primary grow" data-act="closeModal">Done</button></div>`);
+  $$("#frows input").forEach(inp => {
+    inp.onchange = async () => {
+      const name = inp.value.trim(), id = inp.dataset.fid;
+      if (!name) { inp.value = folderName(id); return toast("A folder needs a name."); }
+      if (name === folderName(id)) return;
+      try { await api.renameFolder(id, name); await loadRecipes(); toast("Renamed ✓"); if (parseRoute().view === "recipes") renderRecipes(); }
+      catch (err) { inp.value = folderName(id); toast(friendlyFolderError(err)); }
+    };
+  });
+}
+
 /* ---------- settings ---------- */
 function settingsModal() {
   openModal(`
@@ -481,6 +565,20 @@ const actions = {
   closeModal,
   settings: settingsModal,
   newRecipe: () => { state.draft = null; go("#/edit/new"); },
+  pickFolder: el => { state.folder = el.dataset.id; renderRecipes(); },
+  openFolder: el => { state.folder = el.dataset.id; state.search = ""; go("#/recipes"); },
+  newFolder: () => newFolderModal(f => { state.folder = f.id; if (["recipes", ""].includes(parseRoute().view)) renderRecipes(); }),
+  newFolderFromEdit: () => newFolderModal(f => {
+    state.draft.folder_ids = [...(state.draft.folder_ids || []), f.id];
+    renderEdit(parseRoute().id);
+  }),
+  manageFolders: manageFoldersModal,
+  deleteFolder: async el => {
+    const id = el.dataset.id, name = folderName(id);
+    if (!confirm(`Delete the folder “${name}” for everyone?\n\nThe recipes in it are NOT deleted.`)) return;
+    try { await api.deleteFolder(id); await loadRecipes(); toast("Folder deleted"); manageFoldersModal(); if (parseRoute().view === "recipes") renderRecipes(); }
+    catch (e) { toast(e.message); }
+  },
   removePhoto: () => { state.draft.photo_url = ""; delete state.draft._photoBlob; renderEdit(parseRoute().id); },
   impTab: el => {
     $$(".tabs-mini button").forEach(b => b.classList.toggle("on", b === el));
@@ -563,6 +661,7 @@ function subscribeLive() {
   if (channel) return;
   channel = sb.channel("family")
     .on("postgres_changes", { event: "*", schema: "public", table: "recipes" }, scheduleRefresh)
+    .on("postgres_changes", { event: "*", schema: "public", table: "folders" }, scheduleRefresh)
     .on("postgres_changes", { event: "*", schema: "public", table: "meal_plan" }, scheduleRefresh)
     .on("postgres_changes", { event: "*", schema: "public", table: "shopping_items" }, scheduleRefresh)
     .subscribe();
