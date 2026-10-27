@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Family Recipes</title>
+  <meta name="theme-color" content="#b5532f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Recipes">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1 id="appTitle">Family Recipes</h1>
+    <button class="icon-btn" data-act="settings" aria-label="Settings">⋯</button>
+  </header>
+
+  <main id="view" class="view"><p class="muted center pad">Loading…</p></main>
+
+  <nav class="tabbar" id="tabbar">
+    <a href="#/recipes" data-tab="recipes"><span class="ti">📖</span><span>Recipes</span></a>
+    <a href="#/plan" data-tab="plan"><span class="ti">🗓️</span><span>Plan</span></a>
+    <a href="#/shop" data-tab="shop"><span class="ti">🛒</span><span>Shopping</span></a>
+  </nav>
+
+  <div id="modal" class="modal" hidden>
+    <div class="modal-backdrop" data-act="closeModal"></div>
+    <div class="modal-sheet" role="dialog" aria-modal="true"><div id="modalBody"></div></div>
+  </div>
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="config.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
