@@ -1,0 +1,16 @@
+# Free Supabase projects pause after a week with no activity.
+# This pings the database twice a week so the app is always awake.
+name: Keep Supabase awake
+on:
+  schedule:
+    - cron: "17 14 * * 1,4"   # Mondays and Thursdays
+  workflow_dispatch: {}
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping database
+        run: |
+          curl -fsS "${{ secrets.SUPABASE_URL }}/rest/v1/recipes?select=id&limit=1" \
+            -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}" -o /dev/null
+          echo "Pinged OK"
