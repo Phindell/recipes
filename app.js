@@ -1,5 +1,5 @@
 // Family Recipes — app logic
-import { parseIngredient, scaleLine, combineIngredients, isHeading, itemKey, mergeLines } from "./ingredients.js";
+import { parseIngredient, scaleLine, combineIngredients, isHeading, itemKey, mergeLines, formatQty, aisleOf, AISLES } from "./ingredients.js";
 
 const CFG = window.APP_CONFIG || {};
 const MODE = CFG.SUPABASE_URL && CFG.SUPABASE_ANON_KEY ? "cloud" : "local";
@@ -90,6 +90,7 @@ const localApi = {
     LS.set("recipes", LS.get("recipes").map(r => ({ ...r, folder_ids: (r.folder_ids || []).filter(x => x !== id) })));
   },
   async uploadPhoto(blob) { return blobToDataURL(blob); },
+  async removePhoto() {},
   async importRecipe() { throw new Error("Importing switches on after the cloud setup (SETUP.md). In demo mode, type or paste the recipe below."); }
 };
 
@@ -115,6 +116,12 @@ const cloudApi = {
   async addFolder(name) { return must(await sb.from("folders").insert({ name, created_by: state.user?.email || null }).select().single()); },
   async renameFolder(id, name) { must(await sb.from("folders").update({ name }).eq("id", id)); },
   async deleteFolder(id) { must(await sb.from("folders").delete().eq("id", id)); }, // database also removes it from recipes
+  // Removes a photo this app uploaded, once no recipe uses it. Silently does nothing if storage rules don't allow deletes.
+  async removePhoto(url) {
+    const m = String(url || "").match(/\/storage\/v1\/object\/public\/photos\/(uploads\/[^?#]+)/);
+    if (!m || state.recipes.some(r => r.photo_url === url)) return;
+    try { await sb.storage.from("photos").remove([decodeURIComponent(m[1])]); } catch {}
+  },
   async uploadPhoto(blob) {
     const path = `uploads/${uid()}.jpg`;
     must(await sb.storage.from("photos").upload(path, blob, { contentType: "image/jpeg", cacheControl: "31536000" }));
@@ -134,8 +141,14 @@ const cloudApi = {
 const api = MODE === "cloud" ? cloudApi : localApi;
 
 /* ---------- state ---------- */
-const state = { user: null, recipes: [], folders: [], folder: "all", foldersMissing: false, plan: [], shopping: [], weekStart: startOfWeek(new Date()), search: "", scale: {}, draft: null };
+const state = { user: null, recipes: [], folders: [], folder: "all", foldersMissing: false, plan: [], shopping: [], weekStart: startOfWeek(new Date()), search: "", scale: {}, draft: null, sort: pref("sort") || "az", cook: null, cookDone: {} };
 const recipeById = id => state.recipes.find(r => r.id === id);
+function pref(k, v) { try { if (v === undefined) return localStorage.getItem("frp_" + k); localStorage.setItem("frp_" + k, v); } catch {} }
+// Recipes with "Serves" scale by people; others by a multiplier (×½, ×1, ×1½, ×2…)
+function scaleFactor(r) {
+  const s = state.scale[r.id];
+  return r.servings ? (s ? s / r.servings : 1) : (s || 1);
+}
 
 // Last good copy kept on this device, so recipes and the shopping list still open with no signal.
 const OFFLINE = {
@@ -174,6 +187,7 @@ async function render() {
   const { view, id } = parseRoute();
   $$("#tabbar a").forEach(a => a.classList.toggle("active", a.dataset.tab === (view === "recipe" || view === "edit" ? "recipes" : view)));
   $("#tabbar").hidden = false;
+  if (state.cook && !(view === "recipe" && id === state.cook)) stopCooking();
   window.scrollTo(0, 0);
   try {
     if (view === "recipe") return renderRecipe(id);
@@ -213,12 +227,14 @@ function renderRecipes() {
   const q = state.search.toLowerCase();
   const inFolder = r => state.folder === "all" || (r.folder_ids || []).includes(state.folder);
   const list = state.recipes.filter(r => inFolder(r) && (!q || r.name.toLowerCase().includes(q) || (r.ingredients || []).some(i => i.toLowerCase().includes(q))));
+  if (state.sort === "new") list.sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
   const count = id => state.recipes.filter(r => (r.folder_ids || []).includes(id)).length;
   const emptyMsg = !state.recipes.length ? "No recipes yet — tap + to add or import your first one."
     : q ? "No matches." : `Nothing in “${esc(folderName(state.folder))}” yet. Tap + to add a recipe here, or open a recipe → Edit → tick this folder.`;
   $("#view").innerHTML = `
     ${MODE === "local" ? `<div class="banner">Demo mode — recipes are saved on this device only. Follow SETUP.md to share with family.</div>` : ""}
-    <input type="search" id="search" placeholder="Search recipes or ingredients…" value="${esc(state.search)}" style="margin-top:10px">
+    <div class="row" style="margin-top:10px"><input type="search" id="search" class="grow" placeholder="Search recipes or ingredients…" value="${esc(state.search)}">
+      <select id="sort" aria-label="Sort" style="width:auto"><option value="az" ${state.sort === "az" ? "selected" : ""}>A–Z</option><option value="new" ${state.sort === "new" ? "selected" : ""}>Newest</option></select></div>
     ${state.foldersMissing ? `<div class="banner" style="margin-top:10px">Folders need a quick database update — run <strong>supabase/add-folders.sql</strong> in Supabase (see SETUP.md).</div>` : `
     <div class="folderbar">
       <button class="fchip ${state.folder === "all" ? "on" : ""}" data-act="pickFolder" data-id="all">All <span>${state.recipes.length}</span></button>
@@ -231,6 +247,7 @@ function renderRecipes() {
       : `<p class="muted center pad">${emptyMsg}</p>`}
     <button class="fab" data-act="newRecipe" aria-label="Add recipe">+</button>`;
   const s = $("#search");
+  $("#sort").onchange = e => { state.sort = e.target.value; pref("sort", state.sort); renderRecipes(); };
   s.oninput = () => { state.search = s.value; const pos = s.selectionStart; renderRecipes(); const n = $("#search"); n.focus(); n.setSelectionRange(pos, pos); };
 }
 
@@ -239,23 +256,27 @@ function renderRecipe(id) {
   const r = recipeById(id);
   if (!r) return ($("#view").innerHTML = `<p class="pad center">Recipe not found. <a href="#/recipes">Back</a></p>`);
   const base = r.servings || null;
-  const serves = state.scale[id] || base;
-  const factor = base && serves ? serves / base : 1;
+  const factor = scaleFactor(r);
+  const serves = base ? Math.round(base * factor) : null;
+  const cooking = state.cook === r.id, done = state.cookDone[r.id] || new Set();
+  const tick = k => (cooking ? ` data-act="cookTick" data-k="${k}" class="tickable ${done.has(k) ? "ticked" : ""}"` : "");
   const photo = safeUrl(r.photo_url);
   $("#view").innerHTML = `
     <article class="detail">
       <a href="#/recipes" class="muted" style="text-decoration:none">‹ All recipes</a>
       <h2 class="name">${esc(r.name)}</h2>
+      <button class="btn ${cooking ? "primary" : ""}" data-act="cookMode" data-id="${r.id}" style="margin-bottom:12px">👩‍🍳 ${cooking ? "Cooking — tap to finish" : "Cook mode"}</button>
+      ${cooking ? `<p class="hint" style="margin-top:-6px">Screen stays on. Tap ingredients and steps to tick them off.</p>` : ""}
       ${photo ? `<div class="hero"><img src="${esc(photo)}" alt="${esc(r.name)}"></div>` : ""}
       <section class="section">
         <h3>Ingredients</h3>
-        ${base ? `<div class="scaler">Serves <button data-act="scale" data-id="${r.id}" data-d="-1" aria-label="Fewer">−</button>
-          <strong>${serves}</strong><button data-act="scale" data-id="${r.id}" data-d="1" aria-label="More">+</button></div>` : ""}
-        <ul class="ing">${(r.ingredients || []).map(i => isHeading(i) ? `<li><strong>${esc(i)}</strong></li>` : `<li>${esc(scaleLine(i, factor))}</li>`).join("")}</ul>
+        <div class="scaler">${base ? "Serves" : "Amount"} <button data-act="scale" data-id="${r.id}" data-d="-1" aria-label="Less">−</button>
+          <strong>${base ? serves : "×" + formatQty(factor)}</strong><button data-act="scale" data-id="${r.id}" data-d="1" aria-label="More">+</button></div>
+        <ul class="ing">${(r.ingredients || []).map((i, n) => isHeading(i) ? `<li><strong>${esc(i)}</strong></li>` : `<li${tick("i" + n)}>${esc(scaleLine(i, factor))}</li>`).join("")}</ul>
       </section>
       <section class="section">
         <h3>Method</h3>
-        ${methodHtml(r.method || [])}
+        ${methodHtml(r.method || [], tick)}
       </section>
       ${r.notes ? `<section class="section"><h3>Extra notes</h3><div class="notes">${esc(r.notes)}</div></section>` : ""}
       ${(r.folder_ids || []).filter(folderName).length ? `<div class="folderpick" style="margin-top:8px">${r.folder_ids.filter(folderName).map(fid =>
@@ -271,12 +292,12 @@ function renderRecipe(id) {
 }
 
 // Steps are numbered; a line ending in ":" starts a new group (e.g. "For the sauce:")
-function methodHtml(steps) {
+function methodHtml(steps, tick = () => "") {
   let html = "", open = false;
-  for (const s of steps) {
+  for (const [n, s] of steps.entries()) {
     if (isHeading(s)) { if (open) html += "</ol>"; html += `<p><strong>${esc(s)}</strong></p>`; open = false; continue; }
     if (!open) { html += `<ol class="method">`; open = true; }
-    html += `<li>${esc(s)}</li>`;
+    html += `<li${tick("m" + n)}>${esc(s)}</li>`;
   }
   return html + (open ? "</ol>" : "");
 }
@@ -374,6 +395,7 @@ function renderEdit(id) {
       const saved = await api.saveRecipe(row);
       state.draft = null;
       await loadRecipes();
+      if (existing?.photo_url && existing.photo_url !== saved.photo_url) api.removePhoto(existing.photo_url);
       toast("Saved ✓");
       go("#/recipe/" + saved.id);
     } catch (err) { toast(err.message); btn.disabled = false; btn.textContent = "Save recipe"; }
@@ -436,7 +458,8 @@ function renderPlan() {
         <button class="addslot" data-act="week" data-d="0" style="margin-top:4px">This week</button></div>
       <button class="btn small" data-act="week" data-d="7">›</button>
     </div>
-    <button class="btn primary" data-act="weekToShop" style="width:100%;margin-bottom:12px">🛒 Make shopping list for this week</button>
+    <button class="btn primary" data-act="weekToShop" style="width:100%;margin-bottom:8px">🛒 Make shopping list for this week</button>
+    <button class="btn" data-act="copyLastWeek" style="width:100%;margin-bottom:12px">⧉ Copy last week's meals</button>
     ${days.map(d => {
       const ds = ymd(d);
       return `<div class="day card ${ds === today ? "today" : ""}"><h4>${dayFmt.format(d)}${ds === today ? " · Today" : ""}</h4>
@@ -535,6 +558,13 @@ async function addToShopping(items) {
   return items.length;
 }
 
+// [[aisle, items]] in shop order; empty aisles left out
+function byAisle(items) {
+  const groups = new Map(AISLES.map(a => [a, []]));
+  for (const s of items) groups.get(aisleOf(s.text)).push(s);
+  return [...groups].filter(([, v]) => v.length);
+}
+
 function renderShop() {
   const open = state.shopping.filter(s => !s.checked), done = state.shopping.filter(s => s.checked);
   const li = s => `<li class="${s.checked ? "done" : ""}"><button class="chk" data-act="toggleItem" data-id="${s.id}" aria-label="Tick"></button>
@@ -542,7 +572,8 @@ function renderShop() {
     <button class="del" data-act="delItem" data-id="${s.id}" aria-label="Delete">×</button></li>`;
   $("#view").innerHTML = `
     <form class="additem" id="addItem"><input type="text" id="newItem" placeholder="Add an item…" autocomplete="off"><button class="btn primary">Add</button></form>
-    ${open.length ? `<ul class="list card">${open.map(li).join("")}</ul>` : `<p class="muted center pad">List is empty. Add items, or use 🛒 on a recipe or the meal plan.</p>`}
+    ${open.length ? byAisle(open).map(([a, items]) => `<div class="subhead">${esc(a)}</div><ul class="list card">${items.map(li).join("")}</ul>`).join("")
+      : `<p class="muted center pad">List is empty. Add items, or use 🛒 on a recipe or the meal plan.</p>`}
     ${done.length ? `<div class="subhead">In the cart (${done.length})</div><ul class="list card">${done.map(li).join("")}</ul>` : ""}
     <div class="actions">
       ${open.length ? `<button class="btn" data-act="shareList">📤 Share list</button>` : ""}
@@ -634,19 +665,36 @@ const actions = {
   importUrl: () => { const u = $("#impUrl").value.trim(); if (!u) return toast("Paste a link first."); runImport({ url: u }); },
   importText: () => { const t = $("#impText").value.trim(); if (!t) return toast("Paste some text first."); runImport({ text: t }); },
   scale: el => {
-    const r = recipeById(el.dataset.id); const cur = state.scale[r.id] || r.servings;
-    state.scale[r.id] = Math.max(1, cur + +el.dataset.d); renderRecipe(r.id);
+    const r = recipeById(el.dataset.id), d = +el.dataset.d;
+    if (r.servings) state.scale[r.id] = Math.max(1, (state.scale[r.id] || r.servings) + d);
+    else { const f = state.scale[r.id] || 1; state.scale[r.id] = f + d * 0.5 < 0.5 ? 0.5 : f + d * 0.5; }
+    renderRecipe(r.id);
   },
   recipeToShop: el => {
     const r = recipeById(el.dataset.id);
-    const factor = r.servings && state.scale[r.id] ? state.scale[r.id] / r.servings : 1;
+    const factor = scaleFactor(r);
     shopChecklistModal(`Shopping for ${r.name}`, combineIngredients((r.ingredients || []).map(line => ({ line, factor, recipe: r.name }))));
   },
   recipeToPlan: el => planPickerModal({ recipeId: el.dataset.id }),
+  cookMode: el => { if (state.cook === el.dataset.id) stopCooking(); else startCooking(el.dataset.id); renderRecipe(el.dataset.id); },
+  cookTick: el => {
+    const set = (state.cookDone[state.cook] ||= new Set()), k = el.dataset.k;
+    set.has(k) ? set.delete(k) : set.add(k); el.classList.toggle("ticked", set.has(k));
+  },
+  copyLastWeek: async () => {
+    const from = addDays(state.weekStart, -7);
+    try {
+      const prev = await api.listPlan(ymd(from), ymd(addDays(from, 6)));
+      if (!prev.length) return toast("Nothing was planned last week.");
+      if (state.plan.length && !confirm(`This week already has ${state.plan.length} meal(s). Add last week's ${prev.length} on top?`)) return;
+      for (const p of prev) await api.addPlan({ plan_date: ymd(addDays(fromYmd(p.plan_date), 7)), slot: p.slot, recipe_id: p.recipe_id, label: p.label, servings: p.servings });
+      await loadPlan(); renderPlan(); toast(`Copied ${prev.length} meal${prev.length === 1 ? "" : "s"} ✓`);
+    } catch (e) { toast(e.message); }
+  },
   deleteRecipe: async el => {
     const r = recipeById(el.dataset.id);
     if (!confirm(`Delete “${r.name}” for everyone?`)) return;
-    try { await api.deleteRecipe(r.id); await loadRecipes(); toast("Deleted"); go("#/recipes"); } catch (e) { toast(e.message); }
+    try { await api.deleteRecipe(r.id); await loadRecipes(); api.removePhoto(r.photo_url); toast("Deleted"); go("#/recipes"); } catch (e) { toast(e.message); }
   },
   week: async el => {
     const d = +el.dataset.d; state.weekStart = d === 0 ? startOfWeek(new Date()) : addDays(state.weekStart, d);
@@ -676,7 +724,7 @@ const actions = {
     try { await api.deleteShopping(state.shopping.map(s => s.id)); await loadShopping(); renderShop(); } catch (e) { toast(e.message); }
   },
   shareList: async () => {
-    const text = "Shopping list:\n" + state.shopping.filter(s => !s.checked).map(s => "• " + s.text).join("\n");
+    const text = "Shopping list:\n" + byAisle(state.shopping.filter(s => !s.checked)).map(([a, items]) => `\n${a}\n` + items.map(s => "• " + s.text).join("\n")).join("\n");
     try { if (navigator.share) await navigator.share({ text }); else { await navigator.clipboard.writeText(text); toast("Copied to clipboard"); } } catch {}
   },
   backup: async () => {
@@ -700,6 +748,22 @@ document.addEventListener("click", e => {
   actions[el.dataset.act](el, e);
 });
 window.addEventListener("hashchange", () => { closeModal(); render(); });
+
+/* ---------- cook mode: keep the screen on ---------- */
+let wakeLock = null;
+async function lockScreen() {
+  try { wakeLock = await navigator.wakeLock?.request("screen"); } catch { wakeLock = null; }
+}
+async function startCooking(id) {
+  state.cook = id; document.body.classList.add("cooking");
+  await lockScreen();
+  if (!wakeLock) toast("Tip: this device won't keep the screen on for web apps — set Auto-Lock to Never while cooking.", 4500);
+}
+function stopCooking() {
+  state.cook = null; document.body.classList.remove("cooking");
+  wakeLock?.release().catch(() => {}); wakeLock = null;
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden && state.cook) lockScreen(); });
 
 /* ---------- live updates between family members ---------- */
 let refreshTimer;

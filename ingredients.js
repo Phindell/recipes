@@ -116,3 +116,25 @@ export function mergeLines(a, b) {
   const na = cleanName(pa.name), nb = cleanName(pb.name);
   return fmt({ qty: pa.qty + pb.qty, unit: pa.unit, name: nb.length > na.length && nb.toLowerCase().startsWith(na.toLowerCase()) ? nb : na });
 }
+
+/* ---------- shop aisles (for grouping the shopping list) ---------- */
+export const AISLES = ["Fruit & veg", "Meat & fish", "Dairy & eggs", "Bakery", "Pantry", "Herbs, spices & sauces", "Frozen", "Drinks", "Other"];
+// Checked top to bottom, first match wins — so "coconut milk" is Pantry, not Dairy, and "tomato sauce" isn't Veg.
+const AISLE_WORDS = [
+  ["Frozen", "frozen|ice cream|ice"],
+  ["Fruit & veg", "(bell|red|green|yellow|orange|sweet) peppers?"],
+  ["Pantry", "tomato paste|tomato puree|passata|coconut milk|coconut cream|peanut butter|almond butter|stock|broth|bouillon|canned|tinned|tin of|can of|chickpeas?|lentils|beans|kidney beans|black beans"],
+  ["Herbs, spices & sauces", "salt|pepper|peppercorns?|paprika|cumin|coriander seeds?|turmeric|cinnamon|nutmeg|oregano|thyme|rosemary|chilli flakes|chili flakes|chilli powder|chili powder|curry powder|garam masala|bay leaf|bay leaves|cloves|cardamom|ginger powder|garlic powder|onion powder|allspice|vanilla|sauce|ketchup|mayo|mayonnaise|mustard|vinegar|soy|worcestershire|sriracha|tabasco|pesto|paste|seasoning|spice|stock cube|dressing|relish|chutney"],
+  ["Meat & fish", "chicken|beef|pork|lamb|mince|ground meat|bacon|ham|sausages?|chorizo|salami|turkey|steak|fish|salmon|tuna|cod|haddock|prawns?|shrimp|mussels|crab|anchov(y|ies)|boerewors|biltong"],
+  ["Dairy & eggs", "milk|cream|butter|cheese|cheddar|parmesan|mozzarella|feta|ricotta|mascarpone|yoghurt|yogurt|eggs?|buttermilk|creme fraiche|sour cream|custard"],
+  ["Bakery", "bread|rolls?|buns?|baguette|pita|pitta|wraps?|tortillas?|naan|croissants?|bagels?|muffins?"],
+  ["Fruit & veg", "onions?|garlic|ginger|tomato(es)?|potato(es)?|sweet potato(es)?|carrots?|celery|peppers?|capsicum|chill(i|ies)|chil(e|es)|lettuce|spinach|kale|cabbage|broccoli|cauliflower|courgettes?|zucchini|aubergines?|eggplants?|mushrooms?|cucumbers?|avocados?|lemons?|limes?|oranges?|apples?|bananas?|berries|strawberr(y|ies)|blueberr(y|ies)|grapes|pears?|peach(es)?|mango(es)?|pineapple|spring onions?|scallions?|leeks?|shallots?|pumpkin|butternut|squash|corn|peas|green beans|beetroot|radish(es)?|herbs|parsley|coriander|cilantro|basil|mint|dill|chives|rocket|arugula|salad"],
+  ["Drinks", "juice|wine|beer|soda|cola|water|coffee|tea"],
+  ["Pantry", "flour|sugar|rice|pasta|spaghetti|noodles|oats|cereal|oil|honey|syrup|jam|baking powder|baking soda|bicarbonate|yeast|cocoa|chocolate|nuts|almonds|walnuts|cashews|raisins|crackers|breadcrumbs|cornflour|cornstarch|tomato paste|passata|quinoa|couscous|tins?|cans?"]
+].map(([a, w]) => [a, new RegExp("\\b(" + w + ")\\b", "i")]);
+
+export function aisleOf(text) {
+  const name = parseIngredient(text).name.toLowerCase();
+  for (const [a, re] of AISLE_WORDS) if (re.test(name)) return a;
+  return "Other";
+}

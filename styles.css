@@ -74,6 +74,13 @@ label.field>span{display:block;font-weight:600;margin:0 0 6px;font-size:.92rem}
 .method{padding-left:1.4em;margin:0}
 .method li{padding:6px 0 10px;line-height:1.5}
 .notes{white-space:pre-wrap;line-height:1.5}
+/* cook mode */
+body.cooking .detail{font-size:1.18rem}
+body.cooking .fab{display:none}
+.tickable{cursor:pointer;-webkit-user-select:none;user-select:none}
+.ing li.tickable::before{content:"";display:inline-block;width:18px;height:18px;border:2px solid var(--accent);border-radius:50%;margin-right:10px;vertical-align:-3px}
+.ing li.ticked::before{background:var(--accent)}
+.tickable.ticked{text-decoration:line-through;color:var(--muted)}
 .scaler{display:flex;align-items:center;gap:8px;font-size:.9rem;color:var(--muted);margin-bottom:6px}
 .scaler button{width:32px;height:32px;border-radius:50%;border:1px solid var(--line);background:var(--card);cursor:pointer;font-weight:700}
 .actions{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0}
