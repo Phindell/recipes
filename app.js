@@ -735,7 +735,10 @@ function sharedLink(s) {
   let u = m[0].replace(/[).,!?'"]+$/, "");
   try {
     const x = new URL(u);
-    if (/(^|\.)facebook\.com$/i.test(x.hostname) && x.pathname === "/l.php" && x.searchParams.get("u")) u = x.searchParams.get("u");
+    if (/(^|\.)facebook\.com$/i.test(x.hostname) && x.pathname === "/l.php" && x.searchParams.get("u")) return sharedLink(x.searchParams.get("u"));
+    // drop share-tracking tags (Instagram igsh, Facebook fbclid/mibextid, YouTube si, utm_…) so saved source links stay clean
+    for (const k of [...x.searchParams.keys()]) if (/^(igsh|igshid|fbclid|mibextid|si|utm_.*)$/i.test(k)) x.searchParams.delete(k);
+    u = x.toString();
   } catch {}
   return u;
 }

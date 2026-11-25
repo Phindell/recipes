@@ -86,17 +86,31 @@ Free Supabase projects pause after 7 days with no use. This GitHub job pings it 
 **Add the app to the Home Screen** (each family member)
 1. Open your app link in **Safari** → Share ⬆️ → **Add to Home Screen** → sign in.
 
-**"Save Recipe" in the Share sheet** (import straight from Instagram, TikTok, Safari…)
+**"Save Recipe" — one share button for every app** (Instagram, Facebook, TikTok, YouTube, Pinterest, Safari, Notes, Messages…)
 1. **Shortcuts** app → **+** → name it **Save Recipe**.
-2. Tap ⓘ → turn on **Show in Share Sheet**. Set it to receive **URLs** and **Text**.
+2. Tap ⓘ → turn on **Show in Share Sheet**. Receive: **URLs**, **Text**, **Safari web pages** and **Articles**.
+   Under *If there's no input* choose **Get Clipboard** (so it also works after you just *Copy link*).
 3. Add action **URL Encode** (input: *Shortcut Input*).
 4. Add action **Text**:
    `https://YOUR-GITHUB-NAME.github.io/recipes/?import=` then insert the **URL Encoded Text** variable right after `=`.
 5. Add action **Open URLs** (input: the Text).
+6. Optional: tap the shortcut's name → **Add to Home Screen**, or put it in the Shortcuts widget, for copy-then-tap.
 
-Now in Instagram/TikTok/Safari: **Share → Save Recipe**. It opens in Safari and imports. (iOS opens shortcuts in Safari rather than the Home Screen app, so sign in once in Safari too.) In Instagram use **Share → More** if Save Recipe isn't shown.
+It opens in Safari and imports. (iOS opens shortcuts in Safari rather than the Home Screen app, so sign in once in Safari too.)
 
-**From Facebook:** on the post tap **Share** → scroll the bottom row of options to **More** (or **Share via…**/**Share to…**) → **Save Recipe**. Shared links and text both work: the app finds the link, or reads the text if there's no link. If Facebook won't let the post be read, copy the post text and use **Paste text**.
+**Where to find it in each app**
+
+| App | Tap |
+|---|---|
+| Instagram | ✈️ (Share) under the post → scroll the bottom row → **More** / **Share to…** → Save Recipe |
+| Facebook | **Share** → scroll the bottom row → **More** / **Share via…** → Save Recipe |
+| TikTok / YouTube / Pinterest | **Share** → **More** (…) → Save Recipe |
+| Safari | ⬆️ Share → Save Recipe |
+| Any app with no Share button | **Copy link**, then run Save Recipe from the widget or Home Screen |
+
+Tip: in the iOS share sheet, scroll to the end of the actions list → **Edit Actions** → add Save Recipe to **Favourites** so it's always near the top.
+
+Shared links and text both work: the app finds the link, or reads the text if there's no link. If a post can't be read (private or friends-only), copy the caption and use **Paste text**.
 
 **On Windows (Edge/Chrome):** install the app (address bar → *Install*), and **Recipes** appears in Windows' Share menu too.
 
