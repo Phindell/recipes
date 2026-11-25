@@ -69,6 +69,8 @@ Recipe websites import for free without this step. This step adds Instagram, Tik
 
 Test: in the app tap **+** → paste any recipe link → **Import**.
 
+**Updating the import function later:** open `supabase/functions/import-recipe/index.ts` in this repo on GitHub → copy all → Supabase **Edge Functions → import-recipe → Code** → paste over everything → **Deploy**. (Recipes with several photos are read in one go from the version added in Nov 2026; older versions still work, reading the photos one by one.)
+
 ## 6. Keep it awake
 
 Free Supabase projects pause after 7 days with no use. This GitHub job pings it twice a week.

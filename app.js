@@ -118,7 +118,7 @@ const cloudApi = {
   async deleteFolder(id) { must(await sb.from("folders").delete().eq("id", id)); }, // database also removes it from recipes
   // Removes a photo this app uploaded, once no recipe uses it. Silently does nothing if storage rules don't allow deletes.
   async removePhoto(url) {
-    const m = String(url || "").match(/\/storage\/v1\/object\/public\/photos\/(uploads\/[^?#]+)/);
+    const m = String(url || "").match(/\/storage\/v1\/object\/public\/photos\/((?:uploads|imports)\/[^?#]+)/);
     if (!m || state.recipes.some(r => r.photo_url === url)) return;
     try { await sb.storage.from("photos").remove([decodeURIComponent(m[1])]); } catch {}
   },
@@ -379,7 +379,7 @@ function renderEdit(id) {
       const dataUrl = await blobToDataURL(await compressImage(f, 1600, 0.85));
       payloads.push({ imageBase64: dataUrl.split(",")[1], mediaType: "image/jpeg" });
     }
-    runImport(payloads);
+    runImport(payloads.length === 1 ? payloads[0] : { images: payloads });
   };
   form.onsubmit = async e => {
     e.preventDefault(); syncDraft();
@@ -416,17 +416,27 @@ function mergeImports(parts) {
 
 async function runImport(payload) {
   const status = $("#impStatus");
-  const list = Array.isArray(payload) ? payload : [payload];
-  status.innerHTML = '<span class="spinner"></span> Importing… this can take up to 30 seconds.';
-  $$("[data-act=importUrl],[data-act=importText]").forEach(b => (b.disabled = true));
+  const busy = on => $$("[data-act=importUrl],[data-act=importText]").forEach(b => (b.disabled = on));
+  busy(true);
   try {
     const parts = [], failed = [];
-    for (let i = 0; i < list.length; i++) {
-      if (list.length > 1) status.innerHTML = `<span class="spinner"></span> Reading photo ${i + 1} of ${list.length}…`;
-      try { parts.push(await api.importRecipe(list[i])); }
-      catch (e) { if (list.length === 1) throw e; failed.push({ n: i + 1, e }); }
+    if (payload.images) {
+      // Several photos of one recipe: read together. An import function from before this change can only take one photo,
+      // so if it says so, read them one at a time instead (redeploy it from supabase/functions to get the better version).
+      status.innerHTML = `<span class="spinner"></span> Reading ${payload.images.length} photos together… this can take up to a minute.`;
+      try { parts.push(await api.importRecipe({ images: payload.images })); }
+      catch (e) {
+        if (!/send a url, text or imagebase64/i.test(e.message)) throw e;
+        for (const [i, one] of payload.images.entries()) {
+          status.innerHTML = `<span class="spinner"></span> Reading photo ${i + 1} of ${payload.images.length}…`;
+          try { parts.push(await api.importRecipe(one)); } catch (err) { failed.push({ n: i + 1, e: err }); }
+        }
+        if (!parts.length) throw failed[0].e;
+      }
+    } else {
+      status.innerHTML = '<span class="spinner"></span> Importing… this can take up to 30 seconds.';
+      parts.push(await api.importRecipe(payload));
     }
-    if (!parts.length) throw failed[0].e;
     const r = mergeImports(parts);
     Object.assign(state.draft, {
       name: r.name || state.draft.name, photo_url: r.photo_url || state.draft.photo_url,
@@ -442,7 +452,7 @@ async function runImport(payload) {
       : "✓ Imported — check it over, then tap Save.";
   } catch (e) {
     status.textContent = "⚠️ " + e.message;
-    $$("[data-act=importUrl],[data-act=importText]").forEach(b => (b.disabled = false));
+    busy(false);
   }
 }
 
