@@ -12,6 +12,7 @@ const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": 
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : "id-" + Date.now().toString(36) + Math.random().toString(36).slice(2));
 const lines = t => String(t || "").split(/\r?\n/).map(s => s.trim()).filter(Boolean);
 const safeUrl = u => (/^(https?:|data:image\/)/i.test(String(u || "")) ? u : "");
+const MAX_IMPORT_PHOTOS = 6;
 const SLOTS = [["breakfast", "Breakfast"], ["lunch", "Lunch"], ["dinner", "Dinner"]];
 
 function ymd(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
@@ -285,8 +286,8 @@ function renderEdit(id) {
         <div class="hint">Works with most recipe sites and social posts that have the recipe in the caption.</div></div>
       <div data-imp="text" hidden><textarea id="impText" placeholder="Paste a caption, email or any recipe text…"></textarea>
         <button class="btn primary" data-act="importText" style="margin-top:8px">Sort it into a recipe</button></div>
-      <div data-imp="photo" hidden><label class="btn primary">📷 Take or choose a photo<input type="file" id="impPhoto" accept="image/*" hidden></label>
-        <div class="hint">Cookbook page, recipe card or a screenshot — it gets read and filled in for you.</div></div>
+      <div data-imp="photo" hidden><label class="btn primary">📷 Take or choose photos<input type="file" id="impPhoto" accept="image/*" multiple hidden></label>
+        <div class="hint">Cookbook pages, recipe cards or screenshots — pick several if the recipe runs over more than one page (up to ${MAX_IMPORT_PHOTOS}).</div></div>
       <div id="impStatus" class="hint"></div>
     </div>`}
     <form id="editForm" class="stack" style="margin-top:16px">
@@ -332,10 +333,15 @@ function renderEdit(id) {
   };
   const impPhoto = $("#impPhoto");
   if (impPhoto) impPhoto.onchange = async e => {
-    const file = e.target.files[0]; if (!file) return;
-    const blob = await compressImage(file, 1600, 0.85);
-    const dataUrl = await blobToDataURL(blob);
-    runImport({ imageBase64: dataUrl.split(",")[1], mediaType: "image/jpeg" });
+    let files = [...e.target.files]; if (!files.length) return;
+    if (files.length > MAX_IMPORT_PHOTOS) { toast(`Using the first ${MAX_IMPORT_PHOTOS} photos.`); files = files.slice(0, MAX_IMPORT_PHOTOS); }
+    $("#impStatus").innerHTML = '<span class="spinner"></span> Preparing photos…';
+    const payloads = [];
+    for (const f of files) {
+      const dataUrl = await blobToDataURL(await compressImage(f, 1600, 0.85));
+      payloads.push({ imageBase64: dataUrl.split(",")[1], mediaType: "image/jpeg" });
+    }
+    runImport(payloads);
   };
   form.onsubmit = async e => {
     e.preventDefault(); syncDraft();
@@ -357,12 +363,32 @@ function renderEdit(id) {
   };
 }
 
+// Pages of one recipe photographed separately: each is read on its own, then joined in order.
+function mergeImports(parts) {
+  const out = { name: "", photo_url: "", ingredients: [], method: [], notes: "", servings: null, source_url: "" };
+  for (const r of parts) {
+    out.name ||= r.name || ""; out.photo_url ||= r.photo_url || ""; out.servings ||= r.servings || null; out.source_url ||= r.source_url || "";
+    for (const i of r.ingredients || []) if (!out.ingredients.includes(i)) out.ingredients.push(i);
+    for (const m of r.method || []) if (!out.method.includes(m)) out.method.push(m);
+    if (r.notes && !out.notes.includes(r.notes)) out.notes = [out.notes, r.notes].filter(Boolean).join("\n");
+  }
+  return out;
+}
+
 async function runImport(payload) {
   const status = $("#impStatus");
+  const list = Array.isArray(payload) ? payload : [payload];
   status.innerHTML = '<span class="spinner"></span> Importing… this can take up to 30 seconds.';
   $$("[data-act=importUrl],[data-act=importText]").forEach(b => (b.disabled = true));
   try {
-    const r = await api.importRecipe(payload);
+    const parts = [], failed = [];
+    for (let i = 0; i < list.length; i++) {
+      if (list.length > 1) status.innerHTML = `<span class="spinner"></span> Reading photo ${i + 1} of ${list.length}…`;
+      try { parts.push(await api.importRecipe(list[i])); }
+      catch (e) { if (list.length === 1) throw e; failed.push({ n: i + 1, e }); }
+    }
+    if (!parts.length) throw failed[0].e;
+    const r = mergeImports(parts);
     Object.assign(state.draft, {
       name: r.name || state.draft.name, photo_url: r.photo_url || state.draft.photo_url,
       ingredients: r.ingredients?.length ? r.ingredients : state.draft.ingredients,
@@ -372,7 +398,9 @@ async function runImport(payload) {
     });
     delete state.draft._photoBlob;
     renderEdit(parseRoute().id);
-    $("#impStatus").textContent = "✓ Imported — check it over, then tap Save.";
+    $("#impStatus").textContent = failed.length
+      ? `✓ Imported, but photo ${failed.map(f => f.n).join(", ")} couldn't be read — check it over and add anything missing.`
+      : "✓ Imported — check it over, then tap Save.";
   } catch (e) {
     status.textContent = "⚠️ " + e.message;
     $$("[data-act=importUrl],[data-act=importText]").forEach(b => (b.disabled = false));
@@ -554,6 +582,8 @@ function settingsModal() {
     ${MODE === "local"
       ? `<p>You're in <strong>demo mode</strong>: everything is saved on this device only. Follow <strong>SETUP.md</strong> to share with family and switch on importing.</p>`
       : `<p>Signed in as <strong>${esc(state.user?.email)}</strong>.</p><p class="hint">Everyone signed in sees the same recipes, plan and shopping list.</p>`}
+    <button class="btn" data-act="backup" style="width:100%;margin-top:10px">💾 Back up recipes</button>
+    <p class="hint">Saves every recipe (with photo links) as one file. On iPhone/iPad pick <strong>Save to Files</strong> or the <strong>Sync</strong> app.</p>
     <div class="row" style="margin-top:14px">
       <button class="btn grow" data-act="closeModal">Close</button>
       ${MODE === "cloud" ? `<button class="btn danger grow" data-act="signOut">Sign out</button>` : ""}
@@ -631,6 +661,18 @@ const actions = {
   shareList: async () => {
     const text = "Shopping list:\n" + state.shopping.filter(s => !s.checked).map(s => "• " + s.text).join("\n");
     try { if (navigator.share) await navigator.share({ text }); else { await navigator.clipboard.writeText(text); toast("Copied to clipboard"); } } catch {}
+  },
+  backup: async () => {
+    try {
+      await loadRecipes();
+      const data = { app: CFG.APP_NAME || "Family Recipes", exported_at: new Date().toISOString(), folders: state.folders, recipes: state.recipes };
+      const name = `recipes-backup-${ymd(new Date())}.json`;
+      const file = new File([JSON.stringify(data, null, 2)], name, { type: "application/json" });
+      if (navigator.canShare?.({ files: [file] })) { await navigator.share({ files: [file], title: name }); return; }
+      const a = document.createElement("a"); a.href = URL.createObjectURL(file); a.download = name; a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+      toast(`Saved ${state.recipes.length} recipes ✓`);
+    } catch (e) { if (e.name !== "AbortError") toast(e.message); }
   },
   signOut: async () => { closeModal(); await sb.auth.signOut(); }
 };
