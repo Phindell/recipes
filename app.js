@@ -728,17 +728,30 @@ function subscribeLive() {
 document.addEventListener("visibilitychange", () => { if (!document.hidden && (MODE === "local" || state.user)) scheduleRefresh(); });
 
 /* ---------- start ---------- */
+// Finds the link in shared text ("Look at this! https://…") and unwraps Facebook's redirect links (l.facebook.com/l.php?u=…)
+function sharedLink(s) {
+  const m = String(s).match(/https?:\/\/[^\s<>"]+/i);
+  if (!m) return "";
+  let u = m[0].replace(/[).,!?'"]+$/, "");
+  try {
+    const x = new URL(u);
+    if (/(^|\.)facebook\.com$/i.test(x.hostname) && x.pathname === "/l.php" && x.searchParams.get("u")) u = x.searchParams.get("u");
+  } catch {}
+  return u;
+}
 async function afterSignIn() {
   await loadRecipes();
-  // Share-sheet shortcut support: ?import=<link>
+  // Shared in from another app: ?import=… (iPhone Shortcut) or ?url= / ?text= / ?title= (Windows/Android share)
   const params = new URLSearchParams(location.search);
-  const incoming = params.get("import");
-  if (incoming) {
+  const shared = ["import", "url", "text", "title"].map(k => params.get(k)).filter(Boolean).join("\n").trim();
+  if (shared) {
     history.replaceState(null, "", location.pathname + "#/edit/new");
     state.draft = null;
     await render();
-    const box = $("#impUrl");
-    if (box) { box.value = incoming; runImport({ url: incoming }); }
+    const link = sharedLink(shared);
+    const words = shared.replace(/https?:\/\/\S+/g, "").trim();
+    if (link) { const box = $("#impUrl"); if (box) box.value = link; runImport({ url: link }); }
+    else if (words) { actions.impTab($('[data-act=impTab][data-t=text]')); $("#impText").value = words; runImport({ text: words }); }
     return;
   }
   render();

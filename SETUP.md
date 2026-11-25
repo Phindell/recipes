@@ -96,6 +96,10 @@ Free Supabase projects pause after 7 days with no use. This GitHub job pings it 
 
 Now in Instagram/TikTok/Safari: **Share → Save Recipe**. It opens in Safari and imports. (iOS opens shortcuts in Safari rather than the Home Screen app, so sign in once in Safari too.) In Instagram use **Share → More** if Save Recipe isn't shown.
 
+**From Facebook:** on the post tap **Share** → scroll the bottom row of options to **More** (or **Share via…**/**Share to…**) → **Save Recipe**. Shared links and text both work: the app finds the link, or reads the text if there's no link. If Facebook won't let the post be read, copy the post text and use **Paste text**.
+
+**On Windows (Edge/Chrome):** install the app (address bar → *Install*), and **Recipes** appears in Windows' Share menu too.
+
 ---
 
 ## Using it
