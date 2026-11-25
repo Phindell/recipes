@@ -11,6 +11,7 @@ const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : "id-" + Date.now().toString(36) + Math.random().toString(36).slice(2));
 const lines = t => String(t || "").split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+const hostOf = u => { try { return new URL(u).hostname || u; } catch { return u; } };
 const safeUrl = u => (/^(https?:|data:image\/)/i.test(String(u || "")) ? u : "");
 const MAX_IMPORT_PHOTOS = 6;
 const SLOTS = [["breakfast", "Breakfast"], ["lunch", "Lunch"], ["dinner", "Dinner"]];
@@ -136,8 +137,24 @@ const api = MODE === "cloud" ? cloudApi : localApi;
 const state = { user: null, recipes: [], folders: [], folder: "all", foldersMissing: false, plan: [], shopping: [], weekStart: startOfWeek(new Date()), search: "", scale: {}, draft: null };
 const recipeById = id => state.recipes.find(r => r.id === id);
 
+// Last good copy kept on this device, so recipes and the shopping list still open with no signal.
+const OFFLINE = {
+  get(k) { try { return JSON.parse(localStorage.getItem("frc_" + k)); } catch { return null; } },
+  set(k, v) { if (MODE === "cloud") try { localStorage.setItem("frc_" + k, JSON.stringify(v)); } catch {} }
+};
+let offlineWarned = false;
+async function withOffline(key, load) {
+  try { const v = await load(); OFFLINE.set(key, v); return v; }
+  catch (e) {
+    const v = MODE === "cloud" ? OFFLINE.get(key) : null;
+    if (v == null) throw e;
+    if (!offlineWarned) { offlineWarned = true; setTimeout(() => (offlineWarned = false), 30000); toast("No connection — showing the last saved copy."); }
+    return v;
+  }
+}
+
 async function loadRecipes() {
-  const [recipes, folders] = await Promise.all([api.listRecipes(), api.listFolders().catch(() => null)]);
+  const [recipes, folders] = await Promise.all([withOffline("recipes", api.listRecipes), withOffline("folders", api.listFolders).catch(() => null)]);
   state.recipes = recipes;
   state.foldersMissing = folders === null; // database not updated yet (supabase/add-folders.sql)
   state.folders = folders || [];
@@ -146,7 +163,7 @@ async function loadRecipes() {
 const folderName = id => state.folders.find(f => f.id === id)?.name;
 const friendlyFolderError = e => (/duplicate|unique/i.test(e.message) ? "There's already a folder with that name." : e.message);
 async function loadPlan() { state.plan = await api.listPlan(ymd(state.weekStart), ymd(addDays(state.weekStart, 6))); }
-async function loadShopping() { state.shopping = await api.listShopping(); }
+async function loadShopping() { state.shopping = await withOffline("shopping", api.listShopping); }
 
 /* ---------- router ---------- */
 function parseRoute() { const [, view = "recipes", id] = (location.hash.slice(1) || "/recipes").split("/"); return { view, id }; }
@@ -243,7 +260,7 @@ function renderRecipe(id) {
       ${r.notes ? `<section class="section"><h3>Extra notes</h3><div class="notes">${esc(r.notes)}</div></section>` : ""}
       ${(r.folder_ids || []).filter(folderName).length ? `<div class="folderpick" style="margin-top:8px">${r.folder_ids.filter(folderName).map(fid =>
         `<button class="fchip" data-act="openFolder" data-id="${fid}">📁 ${esc(folderName(fid))}</button>`).join("")}</div>` : ""}
-      ${safeUrl(r.source_url) ? `<p class="hint">Source: <a href="${esc(r.source_url)}" target="_blank" rel="noopener">${esc(new URL(r.source_url).hostname)}</a></p>` : ""}
+      ${safeUrl(r.source_url) ? `<p class="hint">Source: <a href="${esc(r.source_url)}" target="_blank" rel="noopener">${esc(hostOf(r.source_url))}</a></p>` : ""}
       <div class="actions">
         <button class="btn primary" data-act="recipeToShop" data-id="${r.id}">🛒 Add to shopping list</button>
         <button class="btn" data-act="recipeToPlan" data-id="${r.id}">🗓️ Add to plan</button>
@@ -732,7 +749,7 @@ async function start() {
   document.title = CFG.APP_NAME || "Family Recipes";
   if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
   if (MODE === "local") { state.user = { email: "demo" }; return afterSignIn(); }
-  const { createClient } = await import("https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm");
+  const { createClient } = await import("https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/+esm");
   sb = createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY);
   // Fires once on load (INITIAL_SESSION) and again on sign-in / sign-out.
   // Work is deferred with setTimeout: Supabase advises against awaiting its calls inside this callback.
