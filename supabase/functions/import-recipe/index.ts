@@ -93,6 +93,10 @@ export async function fromUrl(raw: string): Promise<Recipe> {
   }
 
   if (host.endsWith("tiktok.com")) return fromTikTok(url);
+  if (host.endsWith("instagram.com")) {
+    const ig = await fromInstagram(url).catch(() => null);
+    if (ig) return ig;
+  }
   if (host === "youtu.be" || host.endsWith("youtube.com")) return fromYouTube(url);
 
   const social = /(^|\.)(instagram\.com|facebook\.com|threads\.net|x\.com|twitter\.com|pinterest\.[a-z.]+)$/.test(host);
@@ -113,11 +117,43 @@ export async function fromUrl(raw: string): Promise<Recipe> {
   const caption = metaContent(html, "og:description") || metaContent(html, "description");
   const image = metaContent(html, "og:image");
   const pageText = social ? "" : visibleText(html);
-  const recipe = await withClaude([{
-    type: "text",
-    text: `Source: ${url.href}\nTitle: ${title}\nCaption/description: ${caption}\n\nPage text:\n${pageText}`.slice(0, 40000),
-  }]);
+  let recipe: Recipe;
+  try {
+    recipe = await withClaude([{
+      type: "text",
+      text: `Source: ${url.href}\nTitle: ${title}\nCaption/description: ${caption}\n\nPage text:\n${pageText}`.slice(0, 40000),
+    }]);
+  } catch (e) {
+    if (social && /No written recipe/.test(String(e))) {
+      throw new Error("This app only lets us see part of the post. Screenshot the caption (tap “more” first) and use “Photo of a recipe”, or copy the caption into “Paste text”.");
+    }
+    throw e;
+  }
   return { ...recipe, photo_url: recipe.photo_url || image || null, source_url: url.href };
+}
+
+// Instagram hides captions from the normal page unless you're logged in (the preview is cut short),
+// but its public embed page shows the whole caption.
+export function instagramCaption(html: string): string {
+  const m = html.match(/class="Caption"[^>]*>([\s\S]*?)<div class="CaptionComments/i)
+    || html.match(/class="Caption"[^>]*>([\s\S]*?)<\/div>/i);
+  if (!m) return "";
+  return decodeEntities(m[1]
+    .replace(/<a[^>]*class="CaptionUsername"[^>]*>[\s\S]*?<\/a>/i, "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<[^>]+>/g, ""))
+    .split("\n").map(l => l.replace(/[ \t]+/g, " ").trim()).join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+async function fromInstagram(url: URL): Promise<Recipe | null> {
+  const m = url.pathname.match(/\/(p|reels?|tv)\/([A-Za-z0-9_-]+)/);
+  if (!m) return null;
+  const html = await getHtml(`https://www.instagram.com/p/${m[2]}/embed/captioned/`, BROWSER_UA);
+  const caption = instagramCaption(html);
+  if (caption.length < 40) return null; // nothing useful: fall back to the normal way
+  const img = (html.match(/class="EmbeddedMediaImage"[^>]*src="([^"]+)"/i) || [])[1];
+  const recipe = await withClaude([{ type: "text", text: `Instagram post caption:\n${caption}`.slice(0, 30000) }]);
+  return { ...recipe, photo_url: img ? decodeEntities(img) : null, source_url: url.href };
 }
 
 async function fromTikTok(url: URL): Promise<Recipe> {
