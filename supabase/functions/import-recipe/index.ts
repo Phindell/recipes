@@ -124,6 +124,10 @@ export async function fromUrl(raw: string): Promise<Recipe> {
       text: `Source: ${url.href}\nTitle: ${title}\nCaption/description: ${caption}\n\nPage text:\n${pageText}`.slice(0, 40000),
     }]);
   } catch (e) {
+    if (/(^|\.)facebook\.com$/.test(host) && /No written recipe/.test(String(e))) {
+      const fb = await fromFacebookEmbed(metaContent(html, "og:url") || url.href).catch(() => null);
+      if (fb) return { ...fb, photo_url: fb.photo_url || image || null, source_url: url.href };
+    }
     if (social && /No written recipe/.test(String(e))) {
       throw new Error("This app only lets us see part of the post. Screenshot the caption (tap “more” first) and use “Photo of a recipe”, or copy the caption into “Paste text”.");
     }
@@ -154,6 +158,16 @@ async function fromInstagram(url: URL): Promise<Recipe | null> {
   const img = (html.match(/class="EmbeddedMediaImage"[^>]*src="([^"]+)"/i) || [])[1];
   const recipe = await withClaude([{ type: "text", text: `Instagram post caption:\n${caption}`.slice(0, 30000) }]);
   return { ...recipe, photo_url: img ? decodeEntities(img) : null, source_url: url.href };
+}
+
+// Facebook shows outside readers only the first lines of a post; its embed page sometimes shows the whole
+// text of a PUBLIC post. Friends-only posts can never be read from outside.
+async function fromFacebookEmbed(postUrl: string): Promise<Recipe | null> {
+  const embed = `https://www.facebook.com/plugins/post.php?href=${encodeURIComponent(postUrl)}&show_text=true&width=500`;
+  const html = await getHtml(embed, BROWSER_UA);
+  const text = visibleText(html);
+  if (text.length < 80) return null;
+  return await withClaude([{ type: "text", text: `Facebook post (embed view):\n${text}`.slice(0, 30000) }]);
 }
 
 async function fromTikTok(url: URL): Promise<Recipe> {
