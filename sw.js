@@ -1,8 +1,8 @@
 // Network-first for the app's own files (so updates show up straight away), cache as offline fallback.
 // The pinned Supabase library from cdn.jsdelivr.net is cached too, so the app still opens with no signal.
 // Recipe data and photos from Supabase are never cached here.
-const CACHE = "family-recipes-v2";
-const SHELL = ["./", "index.html", "styles.css", "app.js", "ingredients.js", "config.js", "manifest.webmanifest", "icons/icon-192.png", "icons/apple-touch-icon.png"];
+const CACHE = "family-recipes-v3";
+const SHELL = ["./", "index.html", "styles.css", "christmas.css", "app.js", "ingredients.js", "config.js", "manifest.webmanifest", "icons/icon-192.png", "icons/apple-touch-icon.png"];
 
 self.addEventListener("install", e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener("activate", e => {

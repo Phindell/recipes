@@ -1,0 +1,61 @@
+/* Christmas theme. Only applies while <html> has the "xmas" class,
+   which the small script in index.html sets between the dates written there.
+   To remove it for good, delete this file and the christmas lines in index.html. */
+html.xmas{
+  --bg:#fbf7ef; --card:#ffffff; --ink:#2a1f1c; --muted:#7c6a5e; --line:#eadfcd;
+  --accent:#b3202e; --accent-ink:#ffffff; --accent-soft:#f7e1df; --ok:#2f6b3f; --danger:#9e1b1b;
+  --pine:#1f5c3a; --gold:#c9a13b; --snow:#b9cde0;
+}
+@media (prefers-color-scheme: dark){
+  html.xmas{
+    --bg:#0f1f18; --card:#172a21; --ink:#f4efe6; --muted:#a9b8ad; --line:#26402f;
+    --accent:#e04a55; --accent-ink:#ffffff; --accent-soft:#3a1d22; --ok:#7fc29a; --danger:#f2867d;
+    --pine:#6fbf8b; --gold:#e3c06a; --snow:#ffffff;
+  }
+}
+
+/* candy-cane stripe under the top bar and above the tab bar */
+html.xmas .topbar{border-bottom:0;box-shadow:0 3px 0 0 transparent}
+html.xmas .topbar::after,
+html.xmas .tabbar::before{
+  content:"";position:absolute;left:0;right:0;height:4px;
+  background:repeating-linear-gradient(135deg,var(--accent) 0 10px,#ffffff 10px 20px,var(--pine) 20px 30px,#ffffff 30px 40px);
+}
+html.xmas .topbar::after{bottom:-4px}
+html.xmas .tabbar{border-top:0}
+html.xmas .tabbar::before{top:-4px}
+
+html.xmas .topbar h1{color:var(--accent)}
+html.xmas .topbar h1::before{content:"🎄 "}
+html.xmas .topbar h1::after{content:" ❄️";font-size:.8em}
+
+/* headings and chips get a touch of pine and gold */
+html.xmas .section h3{border-bottom-color:var(--gold)}
+html.xmas .detail h2.name{color:var(--pine)}
+html.xmas .day.today{border-color:var(--pine);box-shadow:0 0 0 2px var(--gold) inset}
+html.xmas .chip{background:color-mix(in srgb,var(--pine) 14%,var(--card))}
+html.xmas .fchip.on,
+html.xmas .tabs-mini button.on{background:var(--pine);border-color:var(--pine)}
+html.xmas .tabbar a.active{color:var(--accent)}
+html.xmas .rcard .ph{background:color-mix(in srgb,var(--pine) 12%,var(--card))}
+html.xmas .list li.done .chk,
+html.xmas .ing li.ticked::before{background:var(--pine);border-color:var(--pine)}
+html.xmas .list .chk,
+html.xmas .ing li.tickable::before{border-color:var(--pine)}
+html.xmas .fab{box-shadow:0 0 0 3px var(--gold),var(--shadow)}
+
+/* gentle snowfall behind everything; taps go straight through it */
+html.xmas body::before{
+  content:"";position:fixed;inset:-20px 0 0 0;z-index:4;pointer-events:none;opacity:.8;
+  background-image:
+    radial-gradient(2px 2px at 20px 30px,var(--snow) 50%,transparent 51%),
+    radial-gradient(3px 3px at 90px 120px,var(--snow) 50%,transparent 51%),
+    radial-gradient(2px 2px at 160px 60px,var(--snow) 50%,transparent 51%),
+    radial-gradient(2.5px 2.5px at 230px 170px,var(--snow) 50%,transparent 51%),
+    radial-gradient(2px 2px at 300px 90px,var(--snow) 50%,transparent 51%);
+  background-size:320px 220px;
+  animation:xmas-snow 14s linear infinite;
+  filter:drop-shadow(0 0 1px rgba(120,140,160,.6));
+}
+@keyframes xmas-snow{from{background-position:0 0}to{background-position:40px 220px}}
+@media (prefers-reduced-motion: reduce){ html.xmas body::before{animation:none} }

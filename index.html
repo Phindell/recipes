@@ -13,6 +13,17 @@
   <link rel="icon" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="christmas.css">
+  <script>
+    // Christmas theme: on from Nov 26, 2026 until the end of Jan 1, 2027, then off by itself.
+    (function () {
+      var now = new Date(), start = new Date(2026, 10, 26), end = new Date(2027, 0, 2);
+      if (now >= start && now < end) {
+        document.documentElement.classList.add("xmas");
+        document.querySelector('meta[name="theme-color"]').setAttribute("content", "#b3202e");
+      }
+    })();
+  </script>
 </head>
 <body>
   <header class="topbar">
